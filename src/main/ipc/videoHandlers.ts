@@ -5,26 +5,30 @@ import { db as SQL } from "../db/sqlite";
 
 
 // Main IPC handler: Validate file and extract video details
-ipcMain.handle("dropped-is-file", async (_, filePath: string): Promise<FileValidationResponse> => {
+ipcMain.handle("dropped-is-file", async (_, filePath: string): Promise<ValidationResponse> => {
+  if (!isValidVideoFile(filePath)) {
+    return { status: false, error: "Not a valid file." };
+  }
+
+  if (!isSupportedVideoFile(filePath)) {
+    return {
+      status: false,
+      error: "Unsupported video format. Only MP4, WebM, and OGG are supported.",
+    };
+  }
+  return { status: true };
+
+});
+
+ipcMain.handle("get-dropped-file", async (_, filePath: string): Promise<FileValidationResponse> => {
   try {
-    if (!isValidVideoFile(filePath)) {
-      return { isValid: false, error: "Not a valid file." };
-    }
-
-    if (!isSupportedVideoFile(filePath)) {
-      return {
-        isValid: false,
-        error: "Unsupported video format. Only MP4, WebM, and OGG are supported.",
-      };
-    }
-
     const isCached = await isCachedVideoFile(filePath);
     const fileMD5 = isCached.fileMD5;
     if (!isCached.status) {
       insertNewVideoFile(fileMD5);
       const metadata = await getVideoFileProbe(filePath);
       if (!metadata.streams || metadata.streams.length === 0) {
-        return { isValid: false, error: "No video streams found in the file." };
+        return { status: false, error: "No video streams found in the file." };
       }
       await extractAudioTracks(metadata, filePath, fileMD5);
       cleanupCache();
@@ -46,13 +50,13 @@ ipcMain.handle("dropped-is-file", async (_, filePath: string): Promise<FileValid
     //console.log(audioTracks);
 
     return {
-      isValid: true,
+      status: true,
       file: {
         video: video,
         audioTracks: audioTracks,
       },
     };
   } catch (error) {
-    return { isValid: false, error: `Unexpected error: ${(error as Error).message}` };
+    return { status: false, error: `Unexpected error: ${(error as Error).message}` };
   }
 });

@@ -56,6 +56,9 @@ const UtilsAPI = {
   },
   isFile: (path: string) => {
     return ipcRenderer.invoke("dropped-is-file", path);
+  },
+  getFile: (path: string) => {
+    return ipcRenderer.invoke("get-dropped-file", path);
   }
 };
 

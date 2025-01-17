@@ -22,8 +22,13 @@ declare global {
     audioTracks?: AudioTrack[];
   }
 
+  interface ValidationResponse {
+    status: boolean;
+    error?: string;
+  }
+
   interface FileValidationResponse {
-    isValid: boolean;
+    status: boolean;
     file?: VideoDetails;
     error?: string;
   }
