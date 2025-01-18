@@ -3,13 +3,16 @@ import { formatTime } from "@/utils/helper";
 import { FaPlay, FaPause, FaStop } from "react-icons/fa";
 import RangeSlider from "@/components/RangeSlider";
 
-
-const Home = () => {
+const Home = ({ onTitleChange }: { onTitleChange: (title: string) => void; }) => {
   const [videoUrl, setVideoUrl] = useState<string>("");
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isPaused, setIsPaused] = useState(true);
   const [audioTracks, setAudioTracks] = useState<HTMLAudioElement[]>([]);
+  const [audioTracksVolume, setAudioTracksVolume] = useState<number[]>([]);
+  const [masterVolume, setMasterVolume] = useState(1);
+  const [audioContexts, setAudioContexts] = useState<AudioContext[]>([]);
+  const [gainNodes, setGainNodes] = useState<GainNode[]>([]);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
@@ -18,22 +21,28 @@ const Home = () => {
     videoRef.current.muted = true;
     setIsPaused(true);
     // Reset audio track volumes and sliders when a new video is loaded
+    audioContexts.forEach(context => {
+      context.close().catch(() => { });
+    });
+    setAudioContexts([]);
+    setGainNodes([]);
+    setAudioTracksVolume([]);
     if (audioTracks.length > 0) {
-      audioTracks.forEach((audioTrack, index) => {
+      audioTracks.forEach((audioTrack, _) => {
         audioTrack.pause();
-        audioTrack.currentTime = 0; // Reset the audio track to start position
-        const slider = document.querySelectorAll(`.audio-slider`)[index];
-        if (slider) {
-          (slider as HTMLInputElement).value = String(audioTrack.volume);
-        }
+        audioTrack.currentTime = 0;
       });
     }
 
     // Stop all audio tracks when a new video is loaded
     return () => {
+      setAudioTracksVolume([]);
       audioTracks.forEach((audioTrack) => {
         audioTrack.pause();
         audioTrack.currentTime = 0; // Reset the audio track to start position
+      });
+      audioContexts.forEach(context => {
+        context.close().catch(() => { });
       });
     };
   }, [videoUrl]);
@@ -67,6 +76,51 @@ const Home = () => {
   }, [videoUrl, videoRef]);
 
   useEffect(() => {
+    if (audioTracks.length > 0) {
+      const initialVolumes = audioTracks.map((audioTrack) => audioTrack.volume);
+      setAudioTracksVolume(initialVolumes);
+    }
+  }, [audioTracks]);
+
+  useEffect(() => {
+    // Clean up existing contexts first
+    audioContexts.forEach(context => {
+      context.close().catch(() => { });
+    });
+    setAudioContexts([]);
+    setGainNodes([]);
+
+    // Create new contexts and nodes for each track
+    const newContexts: AudioContext[] = [];
+    const newGainNodes: GainNode[] = [];
+
+    audioTracks.forEach((audioTrack) => {
+      const audioContext = new AudioContext();
+      const source = audioContext.createMediaElementSource(audioTrack);
+      const gainNode = audioContext.createGain();
+
+      source.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      newContexts.push(audioContext);
+      newGainNodes.push(gainNode);
+    });
+
+    setAudioContexts(newContexts);
+    setGainNodes(newGainNodes);
+
+    // Set initial volumes
+    const initialVolumes = audioTracks.map(() => 1);
+    setAudioTracksVolume(initialVolumes);
+
+    return () => {
+      newContexts.forEach(context => {
+        context.close().catch(() => { });
+      });
+    };
+  }, [audioTracks]);
+
+  useEffect(() => {
     const handleDragOver = (e) => {
       e.stopPropagation();
       e.preventDefault();
@@ -93,6 +147,7 @@ const Home = () => {
           }
         }
         setVideoUrl(filePath);
+        onTitleChange(filePath.split("\\").pop() || "");
         setAudioTracks(audioElements);
         setSeekCurrentTime(videoFile.file.video.current_seek_time || 0);
       };
@@ -107,11 +162,6 @@ const Home = () => {
     };
   }, []);
 
-  const handleSeekBarChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const newTime = parseFloat(event.target.value);
-    setSeekCurrentTime(newTime);
-  };
-
   const setSeekCurrentTime = (newTime: number) => {
     if (videoRef.current) {
       videoRef.current.currentTime = newTime;
@@ -123,21 +173,20 @@ const Home = () => {
   };
 
   const handleSeekStart = () => {
-    if (videoRef.current) {
-      videoRef.current.pause();
-      audioTracks.forEach((audioTrack) => {
-        audioTrack.pause();
-      });
-    }
+    if (!videoRef.current) return;
+    videoRef.current.pause();
+    audioTracks.forEach((audioTrack) => {
+      audioTrack.pause();
+    });
   };
 
   const handleSeekEnd = () => {
-    if (videoRef.current && !isPaused) {
-      videoRef.current.play();
-      audioTracks.forEach((audioTrack) => {
-        audioTrack.play();
-      });
-    }
+    if (!videoRef.current || isPaused) return;
+    videoRef.current.play();
+    audioTracks.forEach((audioTrack) => {
+      audioTrack.play();
+    });
+
   };
 
   const playPause = () => {
@@ -159,7 +208,7 @@ const Home = () => {
     }
   };
 
-  const playStop = () => {
+  const stop = () => {
     if (videoRef.current) {
       videoRef.current.currentTime = 0;
       videoRef.current.src = "";
@@ -168,6 +217,7 @@ const Home = () => {
       setCurrentTime(0);
       setDuration(0);
       setVideoUrl("");
+      onTitleChange("");
       // Stop all audio tracks
       audioTracks.forEach((audioTrack) => {
         audioTrack.pause();
@@ -178,21 +228,31 @@ const Home = () => {
   };
 
   const handleVolumeChange = (index: number, value: number) => {
-    if (audioTracks[index]) {
-      audioTracks[index].volume = value;
-    }
+    setAudioTracksVolume((prev) => {
+      const updatedVolumes = [...prev];
+      updatedVolumes[index] = value;
+      if (gainNodes[index]) gainNodes[index].gain.value = value * masterVolume;
+      //audioTracks[index].volume = value; Not supported as it can not go past 1
+      return updatedVolumes;
+    });
   };
+
+  const handleMasterVolumeChange = (value: number) => {
+    setMasterVolume(value);
+  };
+
+  useEffect(() => {
+    audioTracks.forEach((_, index) => {
+      if (gainNodes[index]) gainNodes[index].gain.value = audioTracksVolume[index] * masterVolume;
+      // audioTrack.volume = audioTracksVolume[index] * masterVolume;  Not supported as it can not go past 1
+    });
+  }, [audioTracksVolume, masterVolume]);
 
   return (
     <div className="absolute bg-black w-full h-[calc(100%-32px)] top-8 flex flex-col overflow-hidden">
       {videoUrl &&
         <Fragment>
           <div className="relative flex flex-1 justify-center items-center bg-black">
-            <img
-              src="../assets/sample.jpg"
-              alt="Logo"
-              className="absolute max-h-20 object-container"
-            />
             <video
               ref={videoRef}
               controls={false}
@@ -200,19 +260,33 @@ const Home = () => {
               muted={true}
             />
           </div>
-          <div className="absolute z-30 bottom-30 h-24 bg-gradient-to-t from-background-900 to-transparent px-10 flex flex-wrap items-end rounded-t-md">
+          <div className="absolute z-30 bottom-28 h-24 bg-gradient-to-t from-background-900 to-transparent px-10 flex flex-wrap items-end rounded-t-md">
             <div className="flex flex-row space-x-4">
               <div className="flex flex-row space-x-2">
+                <div key="master-volume" className="flex h-24 flex-col items-center">
+                  <RangeSlider
+                    min={0}
+                    max={1.5}
+                    orientation="vertical"
+                    canInteract={!!(videoUrl && videoRef)}
+                    value={masterVolume}
+                    showTooltip={false}
+                    onChange={(value: number) => handleMasterVolumeChange(value)}
+                    onInput={(value: number) => console.log(value)}
+                  />
+                  <span className="text-white mt-2">Master</span>
+                </div>
                 {audioTracks.map((_, index) => (
-                  <div key={index} className="flex flex-col items-center">
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.01"
-                      defaultValue="0"
-                      className="audio-slider w-20 h-1 -rotate-90 appearance-none bg-gray-400"
-                      onChange={(e) => handleVolumeChange(index, parseFloat(e.target.value))}
+                  <div key={index} className="flex h-24 flex-col items-center">
+                    <RangeSlider
+                      min={0}
+                      max={1.5}
+                      orientation="vertical"
+                      canInteract={!!(videoUrl && videoRef && audioTracks[index])}
+                      value={audioTracksVolume[index]}
+                      showTooltip={false}
+                      onChange={(value: number) => handleVolumeChange(index, value)}
+                      onInput={(value: number) => console.log(value)}
                     />
                     <span className="text-white mt-2">Track {index + 1}</span>
                   </div>
@@ -222,33 +296,49 @@ const Home = () => {
           </div>
         </Fragment>
       }
-      <div className="absolute top-0 w-full h-10 bg-gradient-to-b from-background-900 to-transparent px-10 flex flex-wrap items-center">
-        TITLE BAR
-      </div>
       <div className="absolute bottom-0 w-full h-32 bg-gradient-to-t from-background-900 to-transparent px-10 flex flex-wrap items-end rounded-t-md">
         <div className="w-full h-2/6 flex items-end space-x-4 z-10">
-          <input
-            type="range"
-            min="0"
-            max={duration || 0}
+          <RangeSlider
+            min={0}
+            max={duration}
+            orientation="horizontal"
+            canInteract={!!(videoUrl && videoRef)}
             value={currentTime}
-            step={0.01}
-            aria-label="Video Seek Bar"
-            aria-valuenow={currentTime}
-            aria-valuemin={0}
-            aria-valuemax={duration || 0}
-            onChange={handleSeekBarChange}
+            showTooltip={true}
+            formatTooltipValue={(value: number) => {
+              return `${formatTime(value)}`;
+            }}
+            onChange={(value: number) => setSeekCurrentTime(value)}
+            onInput={(value: number) => console.log(value)}
             onMouseDown={handleSeekStart}
             onMouseUp={handleSeekEnd}
-            onTouchStart={handleSeekStart}
-            onTouchEnd={handleSeekEnd}
-            className="w-full h-2 range-thumb bg-gray-400 rounded-full appearance-none cursor-pointer duration-150"
-            style={{
-              backgroundSize: `${(currentTime / duration) * 100}% 100%`,
-              background: `linear-gradient(to right, #00a2ed ${((currentTime / duration) * 100) + 0.15}%, #ffffff 0%)`,
+            barStyle={{ borderRadius: "2px", transform: "scaleY(0.5)", transition: "transform 60ms ease-in-out" }}
+            progressStyle={{ borderRadius: "4px" }}
+            thumbStyle={{ visibility: "hidden", outline: "0px solid rgba(255, 255, 255, 0.5)", transition: "outline 60ms ease-in-out" }}
+            hoverTimeout={{
+              bar: [0, 1500],
+              progress: [0, 0],
+              thumb: [0, 0]
+            }}
+            onHoverStart={(bar: HTMLDivElement, _: HTMLDivElement, thumb: HTMLDivElement, current: "bar" | "progress" | "thumb") => {
+              if (current === "bar") {
+                bar.style.transform = "scaleY(1)";
+                bar.style.borderRadius = "4px";
+                thumb.style.visibility = "visible";
+              } else if (current === "thumb") {
+                thumb.style.outline = "8px solid rgba(255, 255, 255, 0.5)";
+              }
+            }}
+            onHoverEnd={(bar: HTMLDivElement, _: HTMLDivElement, thumb: HTMLDivElement, current: "bar" | "progress" | "thumb") => {
+              if (current === "bar") {
+                bar.style.transform = "scaleY(0.5)";
+                bar.style.borderRadius = "2px";
+                thumb.style.visibility = "hidden";
+              } else if (current === "thumb") {
+                thumb.style.outline = "0px solid rgba(255, 255, 255, 0.5)";
+              }
             }}
           />
-
           <div className="text-text-50 flex-shrink-0 h-4">
             <span>{formatTime(currentTime)}</span> / <span>{formatTime(duration)}</span>
           </div>
@@ -262,7 +352,7 @@ const Home = () => {
           </button>
           {videoUrl &&
             <button
-              onClick={playStop}
+              onClick={stop}
               className="text-text-50"
             >
               <FaStop size={20} />
@@ -271,29 +361,9 @@ const Home = () => {
         </div>
         <div className="w-3/5 h-4/6 flex items-center space-x-2">
           <span className="w-full text-text-50 flex justify-center">
-            Work On Progress
+            Work In Progress
           </span>
         </div>
-      </div>
-      <div className="absolute w-60 h-28 top-20 left-32 bg-red-100/20 p-3">
-        <RangeSlider
-          min={0}
-          max={200}
-          showTooltip={true}
-          formatTooltipValue={(value: number) => {
-            return `${formatTime(value)}`;
-          }}
-          onChange={(value) => console.log(value)}
-        />
-      </div>
-      <div className="absolute w-10 h-28 top-20 left-10 bg-red-100/20 p-3">
-        <RangeSlider
-          min={0}
-          max={100}
-          orientation="vertical"
-          onChange={(value) => console.log(value)}
-          progressStyle={{ background: "linear-gradient(to top, #00a2ed 0%, #00a2ed 80%, #ffffff 100%)" }}
-        />
       </div>
     </div>
   );
