@@ -58,7 +58,6 @@ function calculateCacheSize() {
 export const cleanupCache = () => {
   const maxSize = 10 * 1024 * 1024 * 1024;  // 10 GB in bytes
   const cacheSize = calculateCacheSize();
-  console.log(cacheSize, maxSize, cacheSize > maxSize);
   if (cacheSize > maxSize) {
     const baseDir = path.join(app.getPath("userData"), "database", "files");
     const oldestVideos: { md5_hash: string; }[] = SQL.prepare(

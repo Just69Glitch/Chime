@@ -4,20 +4,31 @@ interface RangeSlider {
   min?: number;
   max?: number;
   orientation?: "horizontal" | "vertical";
+  canInteract?: boolean;
   value?: number;
   showTooltip?: boolean;
   formatTooltipValue?: (value: number) => string;
   onChange?: (value: number) => void;
   onInput?: (value: number) => void;
+  onMouseDown?: (e: MouseEvent | React.MouseEvent) => void;
+  onMouseUp?: (e: MouseEvent | React.MouseEvent) => void;
   barStyle?: React.CSSProperties;
   progressStyle?: React.CSSProperties;
-  numbStyle?: React.CSSProperties;
+  thumbStyle?: React.CSSProperties;
+  onHoverStart?: (bar: HTMLDivElement, progress: HTMLDivElement, thumb: HTMLDivElement, current: "bar" | "progress" | "thumb") => void;
+  onHoverEnd?: (bar: HTMLDivElement, progress: HTMLDivElement, thumb: HTMLDivElement, current: "bar" | "progress" | "thumb") => void;
+  hoverTimeout?: [number, number] | { bar?: [number, number]; progress?: [number, number]; thumb?: [number, number]; };
 }
 
-const RangeSlider: React.FC<RangeSlider> = ({ min = 0, max = 1, orientation = "horizontal", value: propValue, showTooltip = false, formatTooltipValue, onChange, onInput, barStyle = {}, progressStyle = {}, numbStyle = {} }) => {
-  const [value, setValue] = useState<number>(propValue || min);
+const RangeSlider: React.FC<RangeSlider> = ({ min = 0, max = 1, orientation = "horizontal", canInteract = true, value: propValue, showTooltip = false, formatTooltipValue, onChange, onInput, onMouseDown, onMouseUp, barStyle = {}, progressStyle = {}, thumbStyle = {}, onHoverStart, onHoverEnd, hoverTimeout = [0, 0] }) => {
+  const [value, setValue] = useState<number>(propValue ?? min);
   const [dragging, setDragging] = useState<boolean>(false);
+  const [hovering, setHovering] = useState<boolean>(false);
+  const hoverStartTimeout = useRef<NodeJS.Timeout | null>(null);
+  const hoverEndTimeout = useRef<NodeJS.Timeout | null>(null);
   const rangeRef = useRef<HTMLDivElement>(null);
+  const progressRef = useRef<HTMLDivElement>(null);
+  const thumbRef = useRef<HTMLDivElement>(null);
 
   const calculateValue = (e: MouseEvent | React.MouseEvent) => {
     if (!rangeRef.current) return value;
@@ -38,23 +49,68 @@ const RangeSlider: React.FC<RangeSlider> = ({ min = 0, max = 1, orientation = "h
   };
 
   const handleMouseMove = (e: MouseEvent) => {
-    if (!dragging) return;
+    if (!dragging || !canInteract) return;
     const newValue = calculateValue(e);
     setValue(newValue);
-    if (onChange) onChange(newValue);
+    onChange?.(newValue);
+
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
+    if (!canInteract) return;
     const newValue = calculateValue(e);
+    onMouseDown?.(e);
     setValue(newValue);
-    if (onChange) onChange(newValue);
+    onChange?.(newValue);
     setDragging(true);
   };
 
-  const handleMouseUp = () => {
+  const handleMouseUp = (e: MouseEvent) => {
+    onMouseUp?.(e);
     setDragging(false);
-    if (onInput) {
-      onInput(value);
+    onInput?.(value);
+    if (!hovering) {
+      handleOnMouseLeave("bar", true);
+      handleOnMouseLeave("progress", true);
+      handleOnMouseLeave("thumb", true);
+    }
+  };
+
+  const handleOnMouseEnter = (current: "bar" | "progress" | "thumb") => {
+    if (!canInteract) return;
+    if (hoverEndTimeout.current) clearTimeout(hoverEndTimeout.current);
+    const timeout = Array.isArray(hoverTimeout)
+      ? hoverTimeout[0]
+      : hoverTimeout?.[current]?.[0] ?? 0;
+
+    if (timeout > 0) {
+      hoverStartTimeout.current = setTimeout(() => {
+        setHovering(true);
+        if (!rangeRef.current || !progressRef.current || !thumbRef.current) return;
+        onHoverStart?.(rangeRef.current, progressRef.current, thumbRef.current, current);
+      }, timeout);
+    } else {
+      setHovering(true);
+      if (!rangeRef.current || !progressRef.current || !thumbRef.current) return;
+      onHoverStart?.(rangeRef.current, progressRef.current, thumbRef.current, current);
+    }
+  };
+
+  const handleOnMouseLeave = (current: "bar" | "progress" | "thumb", forced: boolean = false) => {
+    if (hoverStartTimeout.current) clearTimeout(hoverStartTimeout.current);
+    const timeout = Array.isArray(hoverTimeout)
+      ? hoverTimeout[1]
+      : hoverTimeout?.[current]?.[1] ?? 0;
+    if (timeout > 0) {
+      hoverEndTimeout.current = setTimeout(() => {
+        setHovering(false);
+        if ((dragging && !forced) || !rangeRef.current || !progressRef.current || !thumbRef.current) return;
+        onHoverEnd?.(rangeRef.current, progressRef.current, thumbRef.current, current);
+      }, timeout);
+    } else {
+      setHovering(false);
+      if ((dragging && !forced) || !rangeRef.current || !progressRef.current || !thumbRef.current) return;
+      onHoverEnd?.(rangeRef.current, progressRef.current, thumbRef.current, current);
     }
   };
 
@@ -79,26 +135,44 @@ const RangeSlider: React.FC<RangeSlider> = ({ min = 0, max = 1, orientation = "h
     }
   }, [propValue]);
 
-  const progressDimension = orientation === "horizontal" ? { width: `${((value - min) / (max - min)) * 100}%` } : { height: `${((value - min) / (max - min)) * 100}%` };
-  const thumbPosition = orientation === "horizontal" ? { left: `${((value - min) / (max - min)) * 100}%` } : { bottom: `${((value - min) / (max - min)) * 100}%` };
-  const tooltipPosition = orientation === "horizontal" ? { left: `${((value - min) / (max - min)) * 100}%` } : { bottom: `${((value - min) / (max - min)) * 100}%` };
+  useEffect(() => {
+    return () => {
+      if (hoverStartTimeout.current) clearTimeout(hoverStartTimeout.current);
+      if (hoverEndTimeout.current) clearTimeout(hoverEndTimeout.current);
+    };
+  }, []);
+
+  const progressDimension = orientation === "horizontal" ? { width: value <= min ? "0%" : `${((value - min) / (max - min)) * 100}%` } : { height: value <= min ? "0%" : `${((value - min) / (max - min)) * 100}%` };
+  const thumbPosition = orientation === "horizontal" ? { left: value <= min ? "0%" : `${((value - min) / (max - min)) * 100}%` } : { bottom: value <= min ? "0%" : `${((value - min) / (max - min)) * 100}%` };
+  const tooltipPosition = orientation === "horizontal" ? { left: value <= min ? "0%" : `${((value - min) / (max - min)) * 100}%` } : { bottom: value <= min ? "0%" : `${((value - min) / (max - min)) * 100}%` };
   return (
     <div
       ref={rangeRef}
-      className={`relative flex items-center justify-center ${orientation === "horizontal" ? "w-full h-2" : "w-2 h-full"} bg-white cursor-pointer`}
+      className={`relative flex items-center justify-center bg-gray-600 ${orientation === "horizontal" ? "w-full h-2" : "w-2 h-full"} ${canInteract ? "cursor-pointer" : "cursor-not-allowed"}`}
       style={barStyle}
+      onMouseEnter={() => handleOnMouseEnter("bar")}
+      onMouseLeave={() => handleOnMouseLeave("bar")}
       onMouseDown={handleMouseDown}
     >
       <div
-        className={`absolute bg-red-500 ${orientation === "horizontal" ? "h-full left-0" : "w-full bottom-0"}`}
-        style={{ ...progressStyle, ...progressDimension }}
+        ref={progressRef}
+        className={`absolute bg-gray-800 ${orientation === "horizontal" ? "h-full left-0" : "w-full bottom-0"}`}
+        style={{
+          ...progressStyle,
+          ...progressDimension
+        }}
+        onMouseEnter={() => handleOnMouseEnter("progress")}
+        onMouseLeave={() => handleOnMouseLeave("progress")}
       />
       <div
-        className={`absolute bg-blue-500 ${orientation === "horizontal" ? "h-[calc(100%+5px)] -translate-x-1/2" : "w-[calc(100%+5px)] translate-y-1/2"} aspect-square rounded-full`}
+        ref={thumbRef}
+        className={`absolute bg-gray-50 ${orientation === "horizontal" ? "h-[calc(100%+5px)] -translate-x-1/2" : "w-[calc(100%+5px)] translate-y-1/2"} aspect-square rounded-full`}
         style={{
-          ...numbStyle,
+          ...thumbStyle,
           ...thumbPosition,
         }}
+        onMouseEnter={() => handleOnMouseEnter("thumb")}
+        onMouseLeave={() => handleOnMouseLeave("thumb")}
       />
       <div
         className={`absolute ${dragging && showTooltip ? "block" : "hidden"} bg-gray-700 text-white px-2 py-1 rounded ${orientation === "horizontal" ? "-translate-x-1/2 -translate-y-8" : "-translate-x-8 translate-y-1/2"}`}
