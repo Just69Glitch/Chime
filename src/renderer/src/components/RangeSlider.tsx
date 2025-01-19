@@ -12,6 +12,9 @@ interface RangeSlider {
   onInput?: (value: number) => void;
   onMouseDown?: (e: MouseEvent | React.MouseEvent) => void;
   onMouseUp?: (e: MouseEvent | React.MouseEvent) => void;
+  onMouseOver?: (value: number, percentage: number, events: React.MouseEvent) => void;
+  onMouseOverMove?: (value: number, percentage: number, events: React.MouseEvent) => void;
+  onMouseLeave?: (value: number, percentage: number, events: React.MouseEvent) => void;
   barStyle?: React.CSSProperties;
   progressStyle?: React.CSSProperties;
   thumbStyle?: React.CSSProperties;
@@ -20,7 +23,7 @@ interface RangeSlider {
   hoverTimeout?: [number, number] | { bar?: [number, number]; progress?: [number, number]; thumb?: [number, number]; };
 }
 
-const RangeSlider: React.FC<RangeSlider> = ({ min = 0, max = 1, orientation = "horizontal", canInteract = true, value: propValue, showTooltip = false, formatTooltipValue, onChange, onInput, onMouseDown, onMouseUp, barStyle = {}, progressStyle = {}, thumbStyle = {}, onHoverStart, onHoverEnd, hoverTimeout = [0, 0] }) => {
+const RangeSlider: React.FC<RangeSlider> = ({ min = 0, max = 1, orientation = "horizontal", canInteract = true, value: propValue, showTooltip = false, formatTooltipValue, onChange, onInput, onMouseDown, onMouseUp, onMouseOver, onMouseOverMove, onMouseLeave, barStyle = {}, progressStyle = {}, thumbStyle = {}, onHoverStart, onHoverEnd, hoverTimeout = [0, 0] }) => {
   const [value, setValue] = useState<number>(propValue ?? min);
   const [dragging, setDragging] = useState<boolean>(false);
   const [hovering, setHovering] = useState<boolean>(false);
@@ -53,7 +56,6 @@ const RangeSlider: React.FC<RangeSlider> = ({ min = 0, max = 1, orientation = "h
     const newValue = calculateValue(e);
     setValue(newValue);
     onChange?.(newValue);
-
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -150,8 +152,22 @@ const RangeSlider: React.FC<RangeSlider> = ({ min = 0, max = 1, orientation = "h
       ref={rangeRef}
       className={`relative flex items-center justify-center bg-gray-600 ${orientation === "horizontal" ? "w-full h-2" : "w-2 h-full"} ${canInteract ? "cursor-pointer" : "cursor-not-allowed"}`}
       style={barStyle}
-      onMouseEnter={() => handleOnMouseEnter("bar")}
-      onMouseLeave={() => handleOnMouseLeave("bar")}
+      onMouseEnter={(e: React.MouseEvent) => {
+        handleOnMouseEnter("bar");
+        if (!canInteract) return;
+        const newValue = calculateValue(e);
+        onMouseOver?.(newValue, (newValue - min) / (max - min) * 100, e);
+      }}
+      onMouseLeave={(e: React.MouseEvent) => {
+        handleOnMouseLeave("bar");
+        const newValue = calculateValue(e);
+        onMouseLeave?.(newValue, (newValue - min) / (max - min) * 100, e);
+      }}
+      onMouseMove={(e: React.MouseEvent) => {
+        if (!canInteract) return;
+        const newValue = calculateValue(e);
+        onMouseOverMove?.(newValue, (newValue - min) / (max - min) * 100, e);
+      }}
       onMouseDown={handleMouseDown}
     >
       <div
@@ -166,7 +182,7 @@ const RangeSlider: React.FC<RangeSlider> = ({ min = 0, max = 1, orientation = "h
       />
       <div
         ref={thumbRef}
-        className={`absolute bg-gray-50 ${orientation === "horizontal" ? "h-[calc(100%+5px)] -translate-x-1/2" : "w-[calc(100%+5px)] translate-y-1/2"} aspect-square rounded-full`}
+        className={`absolute bg-gray-50 ${orientation === "horizontal" ? "h-[calc(100%+calc(100%-25%))] -translate-x-1/2" : "w-[calc(100%+calc(100%-25%))] translate-y-1/2"} aspect-square rounded-full`}
         style={{
           ...thumbStyle,
           ...thumbPosition,
