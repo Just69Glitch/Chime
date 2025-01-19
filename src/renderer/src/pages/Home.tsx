@@ -48,7 +48,7 @@ const Home = ({ onTitleChange }: Props) => {
     const videoFile = await window.utils.getFile(filePath);
     if (!videoFile.status) return alert(videoFile.error);
 
-    generateThumbnails(filePath).then((thumbnails) => {
+    generateThumbnails(filePath, { width: 160, height: 90, quality: 0.7, maxThumbnails: 100 }).then((thumbnails) => {
       setVideoThumbnailData(thumbnails);
     });
 
@@ -325,14 +325,13 @@ const Home = ({ onTitleChange }: Props) => {
               const videoThumbnail = videoThumbnailRef.current;
               const [firstChild, secondChild] = Array.from(videoThumbnail.children) as HTMLDivElement[];
               const image = firstChild.children[0] as HTMLImageElement;
-
               const index = Math.floor((value / duration) * videoThumbnailData.length);
               image.src = videoThumbnailData[index] || transparentImage;
               secondChild.children[0].textContent = formatTime(value);
             }}
             barStyle={{ borderRadius: "2px", transform: "scaleY(0.5)", transition: "transform 60ms ease-in-out" }}
             progressStyle={{ borderRadius: "2px" }}
-            thumbStyle={{ scale: 0, outline: "0px solid rgba(255, 255, 255, 0.5)", transition: "scale 60mms ease-in-out, outline 60ms ease-in-out" }}
+            thumbStyle={{ scale: 0, outline: "0px solid rgba(255, 255, 255, 0.5)", transition: "scale 60ms ease-in-out, outline 60ms ease-in-out" }}
             hoverTimeout={{
               bar: [0, 1500],
               progress: [0, 0],

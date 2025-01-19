@@ -10,47 +10,97 @@ export const formatTime = (time: number) => {
   }
 };
 
-export const generateThumbnails = (filePath: string): Promise<string[]> => {
+export const generateThumbnails = (filePath: string, options: Partial<{ width: number; height: number; quality: number; maxThumbnails: number; }> = {}): Promise<string[]> => {
+  const { width = 160, height = 90, quality = 0.7, maxThumbnails = 100 } = options;
   return new Promise((resolve, reject) => {
     const video = document.createElement("video");
     video.src = filePath;
     video.crossOrigin = "anonymous";
 
     const canvas = document.createElement("canvas");
-    const context = canvas.getContext("2d");
+    const context = canvas.getContext("2d", { alpha: false });
     const thumbnails: string[] = [];
+
+    let isProcessing = false;
+    const processQueue: number[] = [];
+
+    const processThumbnail = async (time: number) => {
+      if (isProcessing) {
+        processQueue.push(time);
+        return;
+      }
+
+      isProcessing = true;
+      video.currentTime = time;
+
+      await new Promise<void>((seekResolve) => {
+        video.onseeked = () => {
+          context!.drawImage(video, 0, 0, width, height);
+          thumbnails.push(canvas.toDataURL("image/jpeg", quality));
+          seekResolve();
+        };
+      });
+
+      isProcessing = false;
+
+      if (processQueue.length > 0) {
+        const nextTime = processQueue.shift()!;
+        processThumbnail(nextTime);
+      }
+    };
 
     video.addEventListener("loadedmetadata", () => {
       const duration = video.duration;
-      const interval = 10;
-      const numThumbnails = Math.floor(duration / interval);
-      canvas.width = 160;
-      canvas.height = 90;
+      canvas.width = width;
+      canvas.height = height;
 
-      let currentTime = 0;
-      let processedThumbnails = 0;
+      // Calculate optimal interval based on video duration and maxThumbnails
+      const numThumbnails = Math.min(Math.floor(duration), maxThumbnails);
+      const interval = duration / numThumbnails;
 
-      video.addEventListener("seeked", function captureFrame() {
-        context!.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const thumbnailDataURL = canvas.toDataURL("image/jpeg");
-        thumbnails.push(thumbnailDataURL);
+      // Generate thumbnail timestamps
+      const timestamps = Array.from(
+        { length: numThumbnails },
+        (_, i) => i * interval
+      );
 
-        processedThumbnails += 1;
-        if (processedThumbnails >= numThumbnails || currentTime + interval > duration) {
-          video.removeEventListener("seeked", captureFrame);
-          resolve(thumbnails);
-        } else {
-          currentTime += interval;
-          video.currentTime = currentTime;
+      // Process thumbnails in chunks
+      const chunkSize = 5;
+      const processChunk = async (chunk: number[]) => {
+        await Promise.all(chunk.map(time => processThumbnail(time)));
+      };
+
+      const chunks: number[][] = [];
+      for (let i = 0; i < timestamps.length; i += chunkSize) {
+        chunks.push(timestamps.slice(i, i + chunkSize));
+      }
+
+      // Process chunks sequentially
+      (async () => {
+        for (const chunk of chunks) {
+          await processChunk(chunk);
         }
-      });
-
-      video.currentTime = currentTime;
+        resolve(thumbnails);
+      })();
     });
 
     video.addEventListener("error", (error) => {
-      reject(`Error loading video: ${error.message}`);
+      reject(new Error(`Failed to load video: ${error.message}`));
     });
+
+    // Cleanup function
+    const cleanup = () => {
+      video.remove();
+      canvas.remove();
+    };
+
+    // Add timeout to prevent hanging
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("Thumbnail generation timed out"));
+    }, 30000); // 30 second timeout
+
+    video.addEventListener("loadedmetadata", () => clearTimeout(timeout));
   });
 };
 
